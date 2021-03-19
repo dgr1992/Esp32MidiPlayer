@@ -16,10 +16,12 @@ MIDI_CREATE_INSTANCE(HardwareSerial, Serial1, MIDI);
 
 void playMIDINote(byte channel, byte note, byte velocity);
 void parser(String buffer);
-void playNote(uint16_t note, uint8_t length);
+void playNote(uint16_t note, uint8_t length, uint8_t einMesslaenge, int noteVerlaengern, int noteLaengeVerbinden));
 void playSong(String input);
 void mqttCallback(char* topic, byte* payload, unsigned int length);
 void mqttReconnect();
+bool istZahl(String zahl);
+int notenLangeInMillisekunden(int laenge, int einMesslaenge, int noteVerlaengern, int noteLaengeVerbinden);
 
 
 WiFiClient wiFiClient;
@@ -113,7 +115,7 @@ void mqttReconnect() {
 
 void setup()
 {
-    //Set up serial output with standard MIDI baud rate
+  //Set up serial output with standard MIDI baud rate
 
   Serial.begin(115200);
   Serial.println();
@@ -141,6 +143,20 @@ void playSong(String input)
 
     Serial.println("PLAY ERKANNT");
 
+    //Prüfe BPM
+    uint8_t bpm = 240 //Rückwertskompatibilität
+    if(input.startsWith("bpm"))
+    {
+      input.remove(0,3);
+      String bpmString = input.c_str();
+      if(istZahl(bpmString))
+      {
+        bpm = atoi(bpmString);
+      }
+      input.remove(0,bpmString.length());
+    }
+
+    // Prüfe das Instrument
     if(input.startsWith("piano"))
     {
       input.remove(0,6);
@@ -173,13 +189,14 @@ void playSong(String input)
 
     delay(500);
 
+    // ermittle Noten
     char * pch;
 
     pch = strtok((char*)input.c_str(), " ");
 
     while ((pch != NULL) && (millis() < timeout))
     {
-      parser(pch);
+      parser(pch, bpm);
       pch = strtok (NULL, " ");
     }
 }
@@ -214,132 +231,230 @@ void playMIDINote(byte channel, byte note, byte velocity)
 }
 
 
-void playNote(uint16_t note, uint8_t length)
+void playNote(uint16_t note, uint8_t length, uint8_t einMesslaenge, int noteVerlaengern, int noteLaengeVerbinden))
 {
   MIDI.sendNoteOn(note, 127, 1);
-  delay(1000/length);
+  milisek = notenLangeInMillisekunden(length, einMesslaenge, noteVerlaengern, noteLaengeVerbinden);
+  delay(milisek);
   MIDI.sendNoteOff(note, 0, 1);
 }
 
-
-void parser(String buffer)
+void parser(String buffer, int8_t bpm)
 {
+  //Länge ganz Ton in millisekunden (1measurelength)
+  int8_t einMesslaenge = ((60*4)/bpm) * 1000;
+
   // C', C, c, c'
   Serial.printf("Parser: %s\n", buffer.c_str());
 
+  // Note
   char note = buffer.charAt(0);
   buffer.remove(0,1);
 
+  // prüfe oktave
   int8_t oktaveOffset = 0;
-
-  if(buffer.charAt(0) == '\'')
+  while(buffer.charAt(0) == '\'')
   {
     oktaveOffset++;
     buffer.remove(0,1);
   }
 
-  if(buffer.charAt(0) == '\'')
+  // prüfe halbton
+  int8_t halbton = 0;
+  switch (buffer.charAt(0))
   {
-    oktaveOffset++;
-    buffer.remove(0,1);
+    case '#':
+      halbton++;
+      buffer.remove(0,1);
+      break;
+    case 'b':
+      halbton--;
+      buffer.remove(0,1);
+      break;
+    default:
+      break;
   }
 
-  if(buffer.charAt(0) == '\'')
+  // Noten länge lesen wenn angegeben
+  String str = buffer.c_str();
+  if(istZahl(str))
   {
-    oktaveOffset++;
-    buffer.remove(0,1);
+    uint8_t length = atoi(str);
+    if(length == 0)
+    {
+      length = 4;
+    }
+    buffer.remove(0,str.length());
   }
 
-  bool istHalbton = 0;
-
-  if(buffer.charAt(0) == '#')
+  // Verlängerung der Note um 50%
+  int8_t noteVerlaengern = 0;
+  if(buffer.charAt(0) == ".")
   {
-    istHalbton = true;
+    noteVerlaenger = 1;
     buffer.remove(0,1);
   }
-
-  uint8_t length = atoi(buffer.c_str());
-
-  if(length==0)
-    length=4;
   
-  switch(note)
+  // Note verbinden
+  int8_t noteLaengeVerbinden = 0;
+  if (buffer.charAt(0) == "_")
   {
-    case 'p':
-        delay(1000/length);      
-    break;
-    case 'C':
-      if(!istHalbton)
-        playNote(48-(oktaveOffset*12),length);
-      else
-        playNote(49-(oktaveOffset*12),length);      
-    break;
-    case 'D':
-      if(!istHalbton)
-        playNote(50-(oktaveOffset*12),length);
-      else
-        playNote(51-(oktaveOffset*12),length);      
-    break;
-    case 'E':
-        playNote(52-(oktaveOffset*12),length);      
-    break;
-    case 'F':
-      if(!istHalbton)
-        playNote(53-(oktaveOffset*12),length);
-      else
-        playNote(54-(oktaveOffset*12),length);      
-    break;
-    case 'G':
-      if(!istHalbton)
-        playNote(55-(oktaveOffset*12),length);
-      else
-        playNote(56-(oktaveOffset*12),length);      
-    break;
-    case 'A':
-      if(!istHalbton)
-        playNote(57-(oktaveOffset*12),length);
-      else
-        playNote(58-(oktaveOffset*12),length);      
-    break;
-    case 'H':
-        playNote(59-(oktaveOffset*12),length);      
-    break;
+    buffer.remove(0,1);
 
-    case 'c':
-      if(!istHalbton)
-        playNote(60+(oktaveOffset*12),length);
-      else
-        playNote(61+(oktaveOffset*12),length);      
-    break;
-    case 'd':
-      if(!istHalbton)
-        playNote(62+(oktaveOffset*12),length);
-      else
-        playNote(63+(oktaveOffset*12),length);      
-    break;
-    case 'e':
-        playNote(64+(oktaveOffset*12),length);      
-    break;
-    case 'f':
-      if(!istHalbton)
-        playNote(65+(oktaveOffset*12),length);
-      else
-        playNote(66+(oktaveOffset*12),length);      
-    break;
-    case 'g':
-      if(!istHalbton)
-        playNote(67+(oktaveOffset*12),length);
-      else
-        playNote(68+(oktaveOffset*12),length);      
-    break;
-    case 'a':
-      if(!istHalbton)
-        playNote(69+(oktaveOffset*12),length);
-      else
-        playNote(70+(oktaveOffset*12),length);      
-    break;
-    case 'h':
-        playNote(71+(oktaveOffset*12),length);      
-    break;
+    char noteVerlaengerung = buffer.charAt(0);
+    if(note == noteVerlaengerung)
+    {
+      buffer.remove(0,1);
+
+      // Ermittle länge
+      String str = buffer.c_str();
+      if(istZahl(str))
+      {
+        noteLaengeVerbinden = atoi(str);
+        if(noteLaengeVerbinden != 0)
+        {
+          buffer.remove(0,str.length());
+        }
+      }
+    }
   }
+  
+
+  // Notenlaenge
+
+
+  // Pause oder Note
+  if(note == 'p' || note == 'P')
+  {
+    milisek = notenLangeInMillisekunden(length, einMesslaenge, noteVerlaengern, noteLaengeVerbinden);
+    delay(milisek);
+  }
+  else
+  {
+    int8_t notenID = 0;
+
+    switch(note)
+    {
+      case 'C':
+        notenID = 48;
+        if(halbton == 1)
+          notenID++;    
+        break;
+      case 'D':
+        notenID = 50;
+        if(halbton == -1)
+          notenID--;
+        if(halbton == 1)
+          notenID++;   
+        break;
+      case 'E':
+          notenID = 52;
+          if(halbton == -1)
+            notenID--;     
+        break;
+      case 'F':
+        notenID = 53;
+        if(halbton == 1)
+          notenID++;    
+        break;
+      case 'G':
+        notenID = 55;
+        if(halbton == -1)
+          notenID--;
+        if(halbton == 1)
+          notenID++;   
+        break;
+      case 'A':
+        notenID = 57;
+        if(halbton == -1)
+          notenID--;
+        if(halbton == 1)
+          notenID++;     
+        break;
+      case 'H':
+      case 'B':
+        notenID = 59;
+        if(halbton == -1)
+          notenID--;    
+        break;
+
+      case 'c':
+        notenID = 60;
+        if(halbton == 1)
+          notenID++;  
+        break;
+      case 'd':
+        notenID = 62;
+        if(halbton == -1)
+          notenID--;
+        if(halbton == 1)
+          notenID++;     
+        break;
+      case 'e':
+        notenID = 64;
+        if(halbton == -1)
+          notenID--;  
+        break;
+      case 'f':
+        notenID = 65;
+        if(halbton == 1)
+          notenID++;   
+        break;
+      case 'g':
+        notenID = 67;
+        if(halbton == -1)
+          notenID--;
+        if(halbton == 1)
+          notenID++;  
+        break;
+      case 'a':
+        notenID = 69;
+        if(halbton == -1)
+          notenID--;
+        if(halbton == 1)
+          notenID++;    
+        break;
+      case 'h':
+      case 'b':
+        midiNote = 71;
+        if(istHalbton == -1)
+          midiNote--;  
+        break;
+    }
+
+    if(notenID != 0)
+    {
+      playNote(notenID-(oktaveOffset*12),length, einMesslaenge, noteVerlaengern, noteLaengeVerbinden);  
+    }
+  }
+}
+
+bool istZahl(String zahl){
+  for(int index; i < zahl.length(); i++)
+  {
+    if(!isDigit())
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+int notenLangeInMillisekunden(int laenge, int einMesslaenge, int noteVerlaengern, int noteLaengeVerbinden)
+{
+  int laengeMilisekunden = einMesslaenge/laenge;
+  
+  // Verlängerung 50%
+  if(noteVerlaengern)
+  {
+    laengeMilisekunden += int(float(einMesslaenge/laenge) * 0.5);
+  }
+
+  // Note verbinden
+  if(noteLaengeVerbinden > 0)
+  {
+    laengeMilisekunden += einMesslaenge/noteLaengeVerbinden;
+  }
+
+  return laengeMilisekunden;
 }
