@@ -318,10 +318,6 @@ void parser(String buffer, int8_t bpm)
       }
     }
   }
-  
-
-  // Notenlaenge
-
 
   // Pause oder Note
   if(note == 'p' || note == 'P')
